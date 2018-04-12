@@ -7,6 +7,11 @@
 #include <lemon/smart_graph.h>
 #include <lemon/network_simplex.h>
 #include <lemon/lgf_writer.h>
+
+#include<time.h>
+#include<sys/timeb.h>
+#include<inttypes.h>
+
 using namespace lemon;
 using namespace std;
 
@@ -124,21 +129,12 @@ void print_graph(SmartDigraph &g, SmartDigraph::NodeMap<int> &supply) {
 }
     file << "}" << std::endl;
 }
-int main()
-{
-    vector<Server> servers;
-    servers.push_back(Server(1,2));
-    servers.push_back(Server(3,4));
-    vector<unsigned int> demands;
-    demands.push_back(1);
-    demands.push_back(2);
 
-
+void find_min_flow(vector<Server> &servers, vector<unsigned int> demands) {
     SmartDigraph g;
     SmartDigraph::NodeMap<int> supply(g);
     SmartDigraph::ArcMap<int> capacity(g);
     SmartDigraph::ArcMap<int> cost(g);
-    SmartDigraph::ArcMap<int> flow(g);
 
     generate_graph(g, supply, capacity, cost, servers, demands);
     print_graph(g, supply);
@@ -146,18 +142,20 @@ int main()
     simplex.costMap(cost);
     simplex.supplyMap(supply);
     simplex.upperMap(capacity);
-    simplex.flowMap(flow);
     NetworkSimplex<SmartDigraph>::ProblemType ret = simplex.run();
 
+
+    SmartDigraph::ArcMap<int> flow(g);
+    simplex.flowMap(flow);
     switch ( ret )
     {
         case NetworkSimplex<SmartDigraph>::INFEASIBLE:
             std::cerr << "INFEASIBLE" << std::endl;
-        break;
+            break;
 
         case NetworkSimplex<SmartDigraph>::OPTIMAL:
             std::cerr << "OPTIMAL" << std::endl;
-        break;
+            break;
 
         case NetworkSimplex<SmartDigraph>::UNBOUNDED:
             std::cerr << "UNBOUNDED" << std::endl;
@@ -169,7 +167,92 @@ int main()
             arcMap("flow", flow).
             arcMap("capacity", capacity).
             run();
+}
 
+void test_simple_min_flow() {
+    vector<Server> servers;
+    servers.push_back(Server(1,2));
+    servers.push_back(Server(3,4));
+    vector<unsigned int> demands;
+    demands.push_back(1);
+    demands.push_back(2);
+
+    find_min_flow(servers, demands);
+}
+
+uint64_t getTimeNow() {
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000LL + (uint64_t)ts.tv_nsec / 1000LL;
+}
+
+void benchmark(bool is_debug) {
+    srand(time(NULL));
+    vector<Server> servers;
+    vector<unsigned int> demands;
+    int amount_servers = (rand() % 20) + 1;
+    int amount_demands = (rand() % 20) + 1;
+    for(int i = 0; i != amount_servers; ++i) {
+        int consumption_rate = (rand() % 100) + 1;
+        int transition_cost = (rand() % 100) + 1;
+        servers.push_back(Server(consumption_rate, transition_cost));
+    }
+    for(int i = 0; i != amount_demands; ++i) {
+        demands.push_back(rand() % amount_servers);
+    }
+    printf("Testing an instance with %d servers and %d timesteps...\n", amount_servers, amount_demands);
+    uint64_t start = getTimeNow();
+
+    SmartDigraph g;
+    SmartDigraph::NodeMap<int> supply(g);
+    SmartDigraph::ArcMap<int> capacity(g);
+    SmartDigraph::ArcMap<int> cost(g);
+
+    generate_graph(g, supply, capacity, cost, servers, demands);
+    uint64_t start_flow = getTimeNow();
+    NetworkSimplex<SmartDigraph, int, int> simplex(g);
+    simplex.costMap(cost);
+    simplex.supplyMap(supply);
+    simplex.upperMap(capacity);
+    NetworkSimplex<SmartDigraph>::ProblemType ret = simplex.run();
+    uint64_t end = getTimeNow();
+
+    uint64_t generate_bench = (start_flow - start);
+    uint64_t flow_bench = (end - start_flow);
+    uint64_t bench = generate_bench + flow_bench;
+    printf("Generating the graph took %" PRIu64 " nanoseconds.\n", generate_bench);
+    printf("Executing the simplex algorithm took %" PRIu64 " nanoseconds.\n", flow_bench);
+    printf("Overall time required was %" PRIu64 " nanoseconds.\n", bench);
+
+    if(is_debug) {
+        SmartDigraph::ArcMap<int> flow(g);
+        simplex.flowMap(flow);
+        switch (ret) {
+            case NetworkSimplex<SmartDigraph>::INFEASIBLE:
+                std::cerr << "INFEASIBLE" << std::endl;
+                break;
+
+            case NetworkSimplex<SmartDigraph>::OPTIMAL:
+                std::cerr << "OPTIMAL" << std::endl;
+                break;
+
+            case NetworkSimplex<SmartDigraph>::UNBOUNDED:
+                std::cerr << "UNBOUNDED" << std::endl;
+        }
+
+        digraphWriter(g).
+                nodeMap("supply", supply).      // write g to the standard output
+                arcMap("cost", cost).          // write 'cost' for for arcs
+                arcMap("flow", flow).
+                arcMap("capacity", capacity).
+                run();
+    }
+
+}
+int main()
+{
+    benchmark(true);
     return 0;
 }
+
 
