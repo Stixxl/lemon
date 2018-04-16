@@ -1,11 +1,14 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 
 #include <vector>
 
 #include <lemon/static_graph.h>
 #include <lemon/smart_graph.h>
 #include <lemon/network_simplex.h>
+#include <lemon/cost_scaling.h>
+#include <lemon/cycle_canceling.h>
 #include <lemon/lgf_writer.h>
 
 #include<time.h>
@@ -16,10 +19,10 @@ using namespace lemon;
 using namespace std;
 
 struct Server {
-    unsigned long consumption_rate;
-    unsigned long transition_cost;
+    vector<unsigned int> consumption_rate;
+    unsigned int transition_cost;
 
-    Server(unsigned long cr, unsigned long tc) {
+    Server(vector<unsigned int> cr, unsigned int tc) {
         consumption_rate = cr;
         transition_cost = tc;
     }
@@ -73,7 +76,7 @@ void generate_graph(SmartDigraph &g, SmartDigraph::NodeMap<int> &supply, SmartDi
              }
 
              SmartDigraph::Arc edge = g.addArc(u_1, u_2);
-             cost.set(edge, it_servers->consumption_rate);
+             cost.set(edge, it_servers->consumption_rate[i]);
              capacity.set(edge, 1);
 
              edge = g.addArc(l_1, l_1a);
@@ -169,38 +172,71 @@ void find_min_flow(vector<Server> &servers, vector<unsigned int> demands) {
             run();
 }
 
-void test_simple_min_flow() {
-    vector<Server> servers;
-    servers.push_back(Server(1,2));
-    servers.push_back(Server(3,4));
-    vector<unsigned int> demands;
-    demands.push_back(1);
-    demands.push_back(2);
-
-    find_min_flow(servers, demands);
-}
-
 uint64_t getTimeNow() {
     timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return (uint64_t)ts.tv_sec * 1000000LL + (uint64_t)ts.tv_nsec / 1000LL;
 }
 
-void benchmark(bool is_debug) {
+template<typename Out>
+void split(const std::string &s, char delim, Out result) {
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, delim)) {
+        *(result++) = item;
+    }
+}
+
+std::vector<std::string> split(const std::string &s, char delim) {
+    std::vector<std::string> elems;
+    split(s, delim, std::back_inserter(elems));
+    return elems;
+}
+
+void read_test_file(string name, vector<Server> &servers, vector<unsigned int> &demands) {
+    string line;
+    ifstream file (name);
+    if (file.is_open())
+    {
+        getline (file,line);
+        vector<string> buffer = split(line, ' ');
+        int amount_servers = stoi(buffer[0]);
+        int amount_demands = stoi(buffer[1]);
+
+        getline (file,line);
+        buffer = split(line, ' ');
+        for(vector<string>::iterator it = buffer.begin(); it != buffer.end(); ++it) {
+            if(!(*it).empty()) {
+                demands.push_back(stoi(*it));
+            }
+        }
+        for(int i = 0; i != amount_servers; ++i) {
+            getline (file,line);
+            buffer = split(line, ' ');
+            vector<unsigned int> consumption_rate;
+            int transition_cost = stoi(buffer[0]);
+            for(int i = 1; i != amount_demands + 1; ++i) {
+                if(!buffer.empty()) {
+                        consumption_rate.push_back(stoi(buffer[i]));
+                    }
+                }
+                servers.push_back(Server(consumption_rate, transition_cost));
+            }
+        file.close();
+    }
+
+    else cout << "Unable to open file " << name;
+}
+
+void benchmark(bool is_debug, int filenumber, uint64_t &generate, uint64_t &flow, string output) {
     srand(time(NULL));
     vector<Server> servers;
     vector<unsigned int> demands;
-    int amount_servers = (rand() % 20) + 1;
-    int amount_demands = (rand() % 20) + 1;
-    for(int i = 0; i != amount_servers; ++i) {
-        int consumption_rate = (rand() % 100) + 1;
-        int transition_cost = (rand() % 100) + 1;
-        servers.push_back(Server(consumption_rate, transition_cost));
-    }
-    for(int i = 0; i != amount_demands; ++i) {
-        demands.push_back(rand() % amount_servers);
-    }
-    printf("Testing an instance with %d servers and %d timesteps...\n", amount_servers, amount_demands);
+    read_test_file("tests/test_" + to_string(filenumber), servers, demands);
+    ofstream file;
+    file.open(output, std::ios_base::app);
+    const int amount_nodes = 2 * demands.size() + servers.size() * (4 * (demands.size() - 1) + 2);
+    const int amount_edges = servers.size() * (2 + 8 * (demands.size() -1));
     uint64_t start = getTimeNow();
 
     SmartDigraph g;
@@ -210,36 +246,42 @@ void benchmark(bool is_debug) {
 
     generate_graph(g, supply, capacity, cost, servers, demands);
     uint64_t start_flow = getTimeNow();
-    NetworkSimplex<SmartDigraph, int, int> simplex(g);
-    simplex.costMap(cost);
-    simplex.supplyMap(supply);
-    simplex.upperMap(capacity);
-    NetworkSimplex<SmartDigraph>::ProblemType ret = simplex.run();
+    NetworkSimplex<SmartDigraph, int, int> alg(g);
+    alg.costMap(cost);
+    alg.supplyMap(supply);
+    alg.upperMap(capacity);
+    NetworkSimplex<SmartDigraph>::ProblemType ret = alg.run();
     uint64_t end = getTimeNow();
+
+    switch (ret) {
+        case NetworkSimplex<SmartDigraph>::INFEASIBLE:
+            std::cerr << "INFEASIBLE" << std::endl;
+            break;
+
+        case NetworkSimplex<SmartDigraph>::OPTIMAL:
+            std::cerr << "OPTIMAL" << std::endl;
+            break;
+
+        case NetworkSimplex<SmartDigraph>::UNBOUNDED:
+            std::cerr << "UNBOUNDED" << std::endl;
+    }
 
     uint64_t generate_bench = (start_flow - start);
     uint64_t flow_bench = (end - start_flow);
     uint64_t bench = generate_bench + flow_bench;
+    generate += generate_bench;
+    flow += flow_bench;
     printf("Generating the graph took %" PRIu64 " nanoseconds.\n", generate_bench);
     printf("Executing the simplex algorithm took %" PRIu64 " nanoseconds.\n", flow_bench);
     printf("Overall time required was %" PRIu64 " nanoseconds.\n", bench);
+    file << (filenumber + 1) << " & " << amount_nodes << " & " << amount_edges << " & ";
+    file << "\\SI{" << generate_bench << "}{\\nano\\second} & " << "\\SI{" << flow_bench << "}{\\nano\\second} & " << "\\SI{" << bench << "}{\\nano\\second}\\\\" << std::endl;
+    file << "\\hline" << std::endl;
+    file.close();
 
     if(is_debug) {
         SmartDigraph::ArcMap<int> flow(g);
-        simplex.flowMap(flow);
-        switch (ret) {
-            case NetworkSimplex<SmartDigraph>::INFEASIBLE:
-                std::cerr << "INFEASIBLE" << std::endl;
-                break;
-
-            case NetworkSimplex<SmartDigraph>::OPTIMAL:
-                std::cerr << "OPTIMAL" << std::endl;
-                break;
-
-            case NetworkSimplex<SmartDigraph>::UNBOUNDED:
-                std::cerr << "UNBOUNDED" << std::endl;
-        }
-
+        alg.flowMap(flow);
         digraphWriter(g).
                 nodeMap("supply", supply).      // write g to the standard output
                 arcMap("cost", cost).          // write 'cost' for for arcs
@@ -249,9 +291,18 @@ void benchmark(bool is_debug) {
     }
 
 }
-int main()
-{
-    benchmark(true);
+int main() {
+    const int amount_tests = 10;
+    uint64_t generate = 0;
+    uint64_t flow = 0;
+    for (int i = 0; i != amount_tests + 1; ++i) {
+        printf("running test %d\n", i);
+    benchmark(false, i, generate, flow, "result");
+}
+    printf("Ran %d tests.\n", amount_tests);
+    printf("Overall time required for generating the graph: %" PRIu64 " nanoseconds\n", generate);
+    printf("Overall time required for executing the simplex algorithm: %" PRIu64 " nanoseconds\n", flow);
+    printf("Overall time required: %" PRIu64 " nanoseconds\n", generate + flow);
     return 0;
 }
 
