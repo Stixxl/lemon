@@ -173,7 +173,9 @@ void benchmark(bool is_debug, int filenumber, uint64_t &generate, uint64_t &flow
     vector<unsigned int> demands;
     read_test_file("tests/test_" + to_string(filenumber), servers, demands);
     ofstream file;
+    ofstream data_file;
     file.open(output, std::ios_base::app);
+    data_file.open(output + "_data", std::ios_base::app);
     const long amount_nodes = 2 * (demands.size() + 1) + servers.size() * (4 * demands.size() + 2);
     const long amount_edges = servers.size() * (2 + 8 * demands.size());
     uint64_t start = getTimeNow();
@@ -185,23 +187,23 @@ void benchmark(bool is_debug, int filenumber, uint64_t &generate, uint64_t &flow
 
     generate_graph(g, supply, capacity, cost, servers, demands);
     uint64_t start_flow = getTimeNow();
-    NetworkSimplex<SmartDigraph, int, int> alg(g);
+    CostScaling<SmartDigraph, int, int> alg(g);
     alg.costMap(cost);
     alg.supplyMap(supply);
     alg.upperMap(capacity);
-    NetworkSimplex<SmartDigraph>::ProblemType ret = alg.run();
+    CostScaling<SmartDigraph>::ProblemType ret = alg.run();
     uint64_t end = getTimeNow();
 
     switch (ret) {
-        case NetworkSimplex<SmartDigraph>::INFEASIBLE:
+        case CostScaling<SmartDigraph>::INFEASIBLE:
             std::cerr << "INFEASIBLE" << std::endl;
             break;
 
-        case NetworkSimplex<SmartDigraph>::OPTIMAL:
+        case CostScaling<SmartDigraph>::OPTIMAL:
             std::cerr << "OPTIMAL" << std::endl;
             break;
 
-        case NetworkSimplex<SmartDigraph>::UNBOUNDED:
+        case CostScaling<SmartDigraph>::UNBOUNDED:
             std::cerr << "UNBOUNDED" << std::endl;
     }
 
@@ -217,6 +219,7 @@ void benchmark(bool is_debug, int filenumber, uint64_t &generate, uint64_t &flow
     file << "\\SI{" << generate_bench << "}{\\nano\\second} & " << "\\SI{" << flow_bench << "}{\\nano\\second} & "
          << "\\SI{" << bench << "}{\\nano\\second}\\\\" << std::endl;
     file << "\\hline" << std::endl;
+    data_file << generate_bench << " & " << flow_bench << " & " << bench << "\\\\" << std::endl;
     file.close();
 
     if (is_debug) {
@@ -233,12 +236,12 @@ void benchmark(bool is_debug, int filenumber, uint64_t &generate, uint64_t &flow
 }
 
 int main() {
-    const int amount_tests = 10;
+    const int amount_tests = 34;
     uint64_t generate = 0;
     uint64_t flow = 0;
-    for (int i = 0; i != amount_tests + 1; ++i) {
+    for (int i = 26; i != amount_tests + 1; ++i) {
         printf("running test %d\n", i);
-        benchmark(false, i, generate, flow, "result");
+        benchmark(false, i, generate, flow, "result_large");
     }
     printf("Ran %d tests.\n", amount_tests);
     printf("Overall time required for generating the graph: %" PRIu64 " nanoseconds\n", generate);
